@@ -1,6 +1,19 @@
-__pycache__
-venv
-*.ipynb*
+__pycache__/
+.venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+*.py[cod]
+*$py.class
+
+# TAK project rules
+GEMINI.md
+certs/
 *.pem
-*.xml
 *.key
+*.pfx
+
+# Misc
+*.ipynb*
+*.xml
+todo.md
