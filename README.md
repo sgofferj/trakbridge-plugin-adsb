@@ -1,6 +1,6 @@
 # trakbridge-plugin-adsb
 
-ADSB Plugin for TrakBridge.
+ADSB Plugin for [TrakBridge](https://github.com/emfoursolutions/trakbridge).
 
 &copy; 2026 Stefan Gofferje
 
