@@ -13,7 +13,7 @@ ADSB Plugin for TrakBridge
 import os
 import json
 from datetime import datetime, timezone
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, cast
 
 import aiohttp
 from plugins.base_plugin import (
@@ -309,6 +309,30 @@ class ADSBPlugin(BaseGPSPlugin, CallsignMappable):  # type: ignore
             "category": "custom",
             "config_fields": [
                 PluginConfigField(
+                    name="lat",
+                    label="Latitude",
+                    field_type="text",
+                    required=False,
+                    default_value=0,
+                    help_text="Your latitude for use in standard API calls",
+                ),
+                PluginConfigField(
+                    name="lon",
+                    label="Longitude",
+                    field_type="text",
+                    required=False,
+                    default_value=0,
+                    help_text="Your longitude for use in standard API calls",
+                ),
+                PluginConfigField(
+                    name="range",
+                    label="Range(nm)",
+                    field_type="text",
+                    required=False,
+                    default_value=0,
+                    help_text="The desired display range for standard API calls",
+                ),
+                PluginConfigField(
                     name="api_key",
                     label="API Key",
                     field_type="password",
@@ -317,10 +341,31 @@ class ADSBPlugin(BaseGPSPlugin, CallsignMappable):  # type: ignore
                     help_text="API key if required by the tracker API",
                 ),
                 PluginConfigField(
+                    name="url_select",
+                    label="Standard APIs",
+                    field_type="select",
+                    required=True,
+                    options=[
+                        {
+                            "value": "https://opendata.adsb.fi/api/v3/lat/_LAT_/lon/_LON_/dist/_RANGE_",
+                            "label": "adsb.fi - Range around location",
+                        },
+                        {
+                            "value": "https://opendata.adsb.fi/api/v2/mil",
+                            "label": "adsb.fi - Military aircraft",
+                        },
+                        {
+                            "value": "_CUSTOM_",
+                            "label": "Custom URL, enter below",
+                        },
+                    ],
+                    help_text="Some commonly used aggregator APIs. Some require an API key to work",
+                ),
+                PluginConfigField(
                     name="server_url",
                     label="Tracker API URL",
                     field_type="url",
-                    required=True,
+                    required=False,
                     placeholder="https://adsb.example.com/api/v2/aircraft",
                     help_text="Tracker API URL (ADSB-Exchange V2 compatible)",
                 ),
@@ -363,6 +408,16 @@ class ADSBPlugin(BaseGPSPlugin, CallsignMappable):  # type: ignore
                     help_text="Choose whether to use the stream's COT type for all "
                     "points or determine COT type individually for each point",
                 ),
+                PluginConfigField(
+                    name="update_interval",
+                    label="Update Interval (seconds)",
+                    field_type="number",
+                    required=False,
+                    default_value=10,
+                    min_value=1,
+                    max_value=3600,
+                    help_text="How often to fetch location updates from the API - setting this to low can get you blocked or banned!",
+                ),
             ],
             "help_sections": [
                 {
@@ -375,11 +430,52 @@ class ADSBPlugin(BaseGPSPlugin, CallsignMappable):  # type: ignore
             ],
         }
 
+    def _get_api_url(self, config: Dict[str, Any]) -> Optional[str]:
+        """Get the API URL based on plugin configuration."""
+        url_select = cast(Optional[str], config.get("url_select"))
+
+        if not url_select:
+            logger.error("`url_select` is not configured.")
+            return None
+
+        if url_select == "_CUSTOM_":
+            server_url = cast(str, config.get("server_url", "")).strip()
+            if not server_url:
+                logger.error(
+                    "`url_select` is '_CUSTOM_' but 'Tracker API URL' is not set."
+                )
+                return None
+            return server_url
+
+        if "_LAT_" in url_select and "_LON_" in url_select and "_RANGE_" in url_select:
+            lat = config.get("lat")
+            lon = config.get("lon")
+            range_val = config.get("range")
+            if lat is None or lon is None or range_val is None:
+                logger.error("URL requires Lat/Lon/Range but they are not configured.")
+                return None
+            return (
+                url_select.replace("_LAT_", str(lat))
+                .replace("_LON_", str(lon))
+                .replace("_RANGE_", str(range_val))
+            )
+
+        return url_select
+
     async def fetch_locations(
         self, session: aiohttp.ClientSession
     ) -> List[Dict[str, Any]]:
         """Fetch locations from the ADSB API"""
         config = self.get_decrypted_config()
+        api_url = self._get_api_url(config)
+        if not api_url:
+            logger.error("Could not determine API URL due to configuration issues.")
+            return [
+                {
+                    "_error": "configuration",
+                    "_error_message": "Could not determine API URL. Please check plugin configuration.",
+                }
+            ]
 
         try:
             headers = {
@@ -388,9 +484,7 @@ class ADSBPlugin(BaseGPSPlugin, CallsignMappable):  # type: ignore
             if config.get("api_key"):
                 headers.update({"Authorization": f"Bearer {config['api_key']}"})
 
-            async with session.get(
-                f"{config['server_url']}", headers=headers
-            ) as response:
+            async with session.get(api_url, headers=headers) as response:
                 if response.status != 200:
                     logger.error(f"API returned status {response.status}")
                     return [
@@ -431,12 +525,12 @@ class ADSBPlugin(BaseGPSPlugin, CallsignMappable):  # type: ignore
         Test the connection to the ADSB API.
         """
         config = self.get_decrypted_config()
-        server_url = config.get("server_url", "").strip()
-        if not server_url:
+        api_url = self._get_api_url(config)
+        if not api_url:
             return {
                 "success": False,
                 "error": "Configuration Error",
-                "message": "Server URL is required. Please configure your server URL in the plugin settings.",
+                "message": "ADSB API URL is not configured correctly. Please check plugin settings.",
             }
         headers = {
             "User-Agent": "TrakBridge ADSB plugin v0.2",
@@ -446,9 +540,7 @@ class ADSBPlugin(BaseGPSPlugin, CallsignMappable):  # type: ignore
 
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.get(
-                    f"{config['server_url']}", headers=headers
-                ) as response:
+                async with session.get(api_url, headers=headers) as response:
                     if response.status == 200:
                         return {
                             "success": True,
@@ -466,11 +558,7 @@ class ADSBPlugin(BaseGPSPlugin, CallsignMappable):  # type: ignore
         Validate the plugin configuration.
         """
         config = self.get_decrypted_config()
-        server_url = config.get("server_url", "").strip()
-        if not server_url:
-            logger.error("Server URL is required but not configured")
-            return False
-        return True
+        return self._get_api_url(config) is not None
 
     def _transform_api_data(
         self, api_data: Dict[str, Any], config: Dict[str, Any]
