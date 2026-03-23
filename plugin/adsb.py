@@ -183,7 +183,6 @@ def get_icon_info(
     icon_set_path = ""
 
     if "#LEO" in operator:
-        info["__milsym"] = {"_attributes": {"id": "SUGP-----------"}}
         leo_icons = {
             "LE_ROTOR": (
                 "66f14976-4b62-4023-8edb-d8d2ebeaa336/" "Public Safety Air/LE_ROTOR.png"
@@ -204,12 +203,12 @@ def get_icon_info(
                 "66f14976-4b62-4023-8edb-d8d2ebeaa336/" "Public Safety Air/LE_UAS.png"
             ),
         }
-        if icon_type:
-            icon_set_path = leo_icons.get(icon_type, "")
+        if icon_type and icon_type in leo_icons:
+            icon_set_path = leo_icons[icon_type]
+            info["__milsym"] = {"_attributes": {"id": "SUGP-----------"}}
 
     # Match EMS/Fire regardless of affiliation (f, h, or u) if type suffix matches
     if "-A-C-H" in cot_type:
-        info["__milsym"] = {"_attributes": {"id": "SFAPCH---------"}}
         ems_rotor_icons = {
             "EMS_ROTOR": (
                 "66f14976-4b62-4023-8edb-d8d2ebeaa336/"
@@ -236,11 +235,11 @@ def get_icon_info(
                 "Public Safety Air/FIRE_ROTOR_RESCUE.png"
             ),
         }
-        if icon_type and not icon_set_path:
-            icon_set_path = ems_rotor_icons.get(icon_type, "")
+        if icon_type and not icon_set_path and icon_type in ems_rotor_icons:
+            icon_set_path = ems_rotor_icons[icon_type]
+            info["__milsym"] = {"_attributes": {"id": "SFAPCH---------"}}
 
     if "-A-C-F" in cot_type:
-        info["__milsym"] = {"_attributes": {"id": "SFAPCF---------"}}
         fire_icons = {
             "EMS_FIXED_WING": (
                 "66f14976-4b62-4023-8edb-d8d2ebeaa336/"
@@ -278,8 +277,9 @@ def get_icon_info(
                 "66f14976-4b62-4023-8edb-d8d2ebeaa336/" "Public Safety Air/FIRE_UAS.png"
             ),
         }
-        if icon_type and not icon_set_path:
-            icon_set_path = fire_icons.get(icon_type, "")
+        if icon_type and not icon_set_path and icon_type in fire_icons:
+            icon_set_path = fire_icons[icon_type]
+            info["__milsym"] = {"_attributes": {"id": "SFAPCF---------"}}
 
     if icon_set_path:
         info["usericon"] = {"_attributes": {"iconsetpath": icon_set_path}}
@@ -307,6 +307,8 @@ class ADSBPlugin(BaseGPSPlugin, CallsignMappable):  # type: ignore
             "description": "Get aircraft data from ADSB aggregators",
             "icon": "fas fa-plane",
             "category": "custom",
+            "min_poll_interval": 5,
+            "hide_cot_type": True,
             "config_fields": [
                 PluginConfigField(
                     name="lat",
@@ -351,8 +353,24 @@ class ADSBPlugin(BaseGPSPlugin, CallsignMappable):  # type: ignore
                             "label": "adsb.fi - Range around location",
                         },
                         {
+                            "value": "https://opendata.adsb.fi/api/v2/hex/_URL_OPT_",
+                            "label": "adsb.fi - ICAO Hex ID filter (fill desired id in Optional value)",
+                        },
+                        {
+                            "value": "https://opendata.adsb.fi/api/v2/callsign/_URL_OPT_",
+                            "label": "adsb.fi - Callsign filter (fill desired callsign in Optional value)",
+                        },
+                        {
+                            "value": "https://opendata.adsb.fi/api/v2/registration/_URL_OPT_",
+                            "label": "adsb.fi - Registration filter (fill desired registration in Optional value)",
+                        },
+                        {
+                            "value": "https://opendata.adsb.fi/api/v2/sqk/_URL_OPT_",
+                            "label": "adsb.fi - Squawk filter (fill desired squawk in Optional value)",
+                        },
+                        {
                             "value": "https://opendata.adsb.fi/api/v2/mil",
-                            "label": "adsb.fi - Military aircraft",
+                            "label": "adsb.fi - Military aircraft filter",
                         },
                         {
                             "value": "_CUSTOM_",
@@ -360,6 +378,14 @@ class ADSBPlugin(BaseGPSPlugin, CallsignMappable):  # type: ignore
                         },
                     ],
                     help_text="Some commonly used aggregator APIs. Some require an API key to work",
+                ),
+                PluginConfigField(
+                    name="url_opt",
+                    label="Optional value",
+                    field_type="text",
+                    required=False,
+                    placeholder="7700",
+                    help_text="Optional value, e.g. for hex/icao or squawk endpoints",
                 ),
                 PluginConfigField(
                     name="server_url",
@@ -391,33 +417,6 @@ class ADSBPlugin(BaseGPSPlugin, CallsignMappable):  # type: ignore
                     default_value=False,
                     help_text="Log details of unknown aircraft to console.",
                 ),
-                # Add cot_type_mode to plugin config
-                PluginConfigField(
-                    name="cot_type_mode",
-                    label="COT Type Mode",
-                    field_type="select",
-                    required=False,
-                    default_value="per_point",
-                    options=[
-                        {
-                            "value": "stream",
-                            "label": "Use stream COT type for all points",
-                        },
-                        {"value": "per_point", "label": "Determine COT type per point"},
-                    ],
-                    help_text="Choose whether to use the stream's COT type for all "
-                    "points or determine COT type individually for each point",
-                ),
-                PluginConfigField(
-                    name="update_interval",
-                    label="Update Interval (seconds)",
-                    field_type="number",
-                    required=False,
-                    default_value=10,
-                    min_value=1,
-                    max_value=3600,
-                    help_text="How often to fetch location updates from the API - setting this to low can get you blocked or banned!",
-                ),
             ],
             "help_sections": [
                 {
@@ -447,20 +446,28 @@ class ADSBPlugin(BaseGPSPlugin, CallsignMappable):  # type: ignore
                 return None
             return server_url
 
-        if "_LAT_" in url_select and "_LON_" in url_select and "_RANGE_" in url_select:
-            lat = config.get("lat")
-            lon = config.get("lon")
-            range_val = config.get("range")
-            if lat is None or lon is None or range_val is None:
-                logger.error("URL requires Lat/Lon/Range but they are not configured.")
-                return None
-            return (
-                url_select.replace("_LAT_", str(lat))
-                .replace("_LON_", str(lon))
-                .replace("_RANGE_", str(range_val))
-            )
+        url = url_select
 
-        return url_select
+        # Map placeholders to their corresponding config field names and display labels
+        placeholders = {
+            "_LAT_": ("lat", "Latitude"),
+            "_LON_": ("lon", "Longitude"),
+            "_RANGE_": ("range", "Range"),
+            "_URL_OPT_": ("url_opt", "Optional value"),
+        }
+
+        for placeholder, (field_name, label) in placeholders.items():
+            if placeholder in url:
+                value = config.get(field_name)
+                # url_opt should not be empty, others just need to be not None
+                if value is None or (placeholder == "_URL_OPT_" and not str(value)):
+                    logger.error(
+                        f"URL requires `{placeholder}` but `{label}` is not configured."
+                    )
+                    return None
+                url = url.replace(placeholder, str(value))
+
+        return url
 
     async def fetch_locations(
         self, session: aiohttp.ClientSession
@@ -557,7 +564,19 @@ class ADSBPlugin(BaseGPSPlugin, CallsignMappable):  # type: ignore
         """
         Validate the plugin configuration.
         """
+        if not super().validate_config():
+            return False
+
         config = self.get_decrypted_config()
+        url_select = cast(Optional[str], config.get("url_select"))
+
+        if url_select and "_URL_OPT_" in url_select:
+            if not config.get("url_opt"):
+                logger.error(
+                    "`url_select` contains `_URL_OPT_` but `url_opt` is not set."
+                )
+                return False
+
         return self._get_api_url(config) is not None
 
     def _transform_api_data(
