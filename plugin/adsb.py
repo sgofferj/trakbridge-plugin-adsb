@@ -10,6 +10,10 @@
 ADSB Plugin for TrakBridge
 """
 
+import asyncio
+import fcntl
+import time
+from urllib.parse import urlparse
 import os
 import json
 from datetime import datetime, timezone
@@ -291,6 +295,8 @@ class ADSBPlugin(BaseGPSPlugin, CallsignMappable):  # type: ignore
     """ADSB integration"""
 
     PLUGIN_NAME = "adsb"
+    # Max rate across all instances hitting the same hostname
+    MAX_API_RATE = 1.5
 
     @classmethod
     def get_plugin_name(cls) -> str:
@@ -307,7 +313,8 @@ class ADSBPlugin(BaseGPSPlugin, CallsignMappable):  # type: ignore
             "description": "Get aircraft data from ADSB aggregators",
             "icon": "fas fa-plane",
             "category": "custom",
-            "min_poll_interval": 5,
+            "min_poll_interval": 2,
+            "max_api_rate": self.MAX_API_RATE,
             "hide_cot_type": True,
             "config_fields": [
                 PluginConfigField(
@@ -429,6 +436,44 @@ class ADSBPlugin(BaseGPSPlugin, CallsignMappable):  # type: ignore
             ],
         }
 
+    async def _wait_for_api_slot(self, api_url: str) -> None:
+        """Wait for the next available API call slot across all workers."""
+        try:
+            hostname = urlparse(api_url).netloc or "unknown"
+            lock_path = f"/tmp/trakbridge-adsb-{hostname}.lock"
+
+            # 1. Acquire slot by locking the file briefly
+            with open(lock_path, "a+b") as f:
+                # Exclusive block lock (briefly)
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+                try:
+                    f.seek(0)
+                    content = f.read().strip()
+                    last_reserved_time = float(content) if content else 0.0
+                except (ValueError, TypeError):
+                    last_reserved_time = 0.0
+
+                now = time.time()
+                # Slot is either now or some time after the last reserved slot
+                slot_time = max(now, last_reserved_time + self.MAX_API_RATE)
+
+                # Update the file with the newly reserved slot time
+                f.seek(0)
+                f.truncate()
+                f.write(str(slot_time).encode())
+                # Implicit unlock on file close, but let's be explicit
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+
+            # 2. Wait until our reserved slot time (non-blocking for the worker)
+            wait_duration = slot_time - time.time()
+            if wait_duration > 0:
+                await asyncio.sleep(wait_duration)
+
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.warning(f"Cross-worker rate limit sync error: {e}")
+            # Fallback to a simple small sleep on error to be safe
+            await asyncio.sleep(self.MAX_API_RATE / 2)
+
     def _get_api_url(self, config: Dict[str, Any]) -> Optional[str]:
         """Get the API URL based on plugin configuration."""
         url_select = cast(Optional[str], config.get("url_select"))
@@ -483,6 +528,9 @@ class ADSBPlugin(BaseGPSPlugin, CallsignMappable):  # type: ignore
                     "_error_message": "Could not determine API URL. Please check plugin configuration.",
                 }
             ]
+
+        # Ensure we respect global cross-worker rate limits
+        await self._wait_for_api_slot(api_url)
 
         try:
             headers = {
@@ -539,6 +587,10 @@ class ADSBPlugin(BaseGPSPlugin, CallsignMappable):  # type: ignore
                 "error": "Configuration Error",
                 "message": "ADSB API URL is not configured correctly. Please check plugin settings.",
             }
+
+        # Ensure we respect global cross-worker rate limits
+        await self._wait_for_api_slot(api_url)
+
         headers = {
             "User-Agent": "TrakBridge ADSB plugin v0.2",
         }

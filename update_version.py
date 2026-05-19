@@ -4,6 +4,7 @@ import re
 import os
 import sys
 
+
 def update_version_in_adsb_plugin():
     script_dir = os.path.dirname(os.path.abspath(__file__))
     pyproject_path = os.path.join(script_dir, "pyproject.toml")
@@ -39,8 +40,13 @@ def update_version_in_adsb_plugin():
 
     # Check if the User-Agent line exists
     if not re.search(user_agent_pattern, adsb_content):
-        print(f"Warning: User-Agent line not found in {adsb_plugin_path}. Please add a line like '"User-Agent": "TrakBridge ADSB plugin vX.Y.Z"' for automation.")
-        sys.exit(0) # Exit with 0 as it's not a critical error if line doesn't exist yet
+        print(
+            f"Warning: User-Agent line not found in {adsb_plugin_path}. "
+            f'Please add a line like \'"User-Agent": "TrakBridge ADSB plugin vX.Y.Z"\' for automation.'
+        )
+        sys.exit(
+            0
+        )  # Exit with 0 as it's not a critical error if line doesn't exist yet
 
     # Update User-Agent string
     new_adsb_content = re.sub(
@@ -60,6 +66,7 @@ def update_version_in_adsb_plugin():
             sys.exit(1)
     else:
         print(f"plugin/adsb.py User-Agent is already v{version}")
+
 
 if __name__ == "__main__":
     update_version_in_adsb_plugin()
