@@ -4,6 +4,7 @@ version: "0.8.0"
 entry_point: plugin/adsb.py
 class_name: ADSBPlugin
 description: "Get aircraft data from ADSB aggregators"
+icon: "fas fa-plane"
 author: Stefan Gofferje
 plugin_type: gps
 tier: community
