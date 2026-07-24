@@ -69,3 +69,13 @@ poetry run pytest
 ## License
 
 This project is licensed under the GNU General Public License Version 3 or higher. See the `LICENSE` file for details.
+
+## Changelog
+
+### 0.8.0 → 0.9.0
+
+- **Upgraded to TrakBridge 2.0.x API.** Plugins now use `plugin.yaml` manifest format for the admin UI installer, with `trakbridge-plugin-sdk>=2.0.0` dependency.
+- Added `plugin.yaml` manifest (id, name, version, entry point, icon, tier, min version).
+- Added release packaging script (`scripts/package_release.py`) and CI workflow (`.github/workflows/release.yml`).
+- Added Font Awesome icon for admin UI display.
+- Removed legacy `GEMINI.md` → renamed to `AGENTS.md` (gitignored).
