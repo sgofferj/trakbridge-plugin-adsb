@@ -7,7 +7,7 @@ __pycache__/
 *$py.class
 
 # TAK project rules
-GEMINI.md
+AGENTS.md
 certs/
 *.pem
 *.key
@@ -17,3 +17,4 @@ certs/
 *.ipynb*
 *.xml
 todo.md
+dist/

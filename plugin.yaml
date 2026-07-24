@@ -1,0 +1,10 @@
+id: adsb
+name: ADSB Plugin
+version: "0.8.0"
+entry_point: plugin/adsb.py
+class_name: ADSBPlugin
+description: "Get aircraft data from ADSB aggregators"
+author: Stefan Gofferje
+plugin_type: gps
+tier: community
+min_trakbridge_version: "2.0.0"
